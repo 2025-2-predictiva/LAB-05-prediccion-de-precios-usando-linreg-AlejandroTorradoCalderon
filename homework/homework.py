@@ -1,63 +1,204 @@
-#
-# En este dataset se desea pronosticar el precio de vhiculos usados. El dataset
-# original contiene las siguientes columnas:
-#
-# - Car_Name: Nombre del vehiculo.
-# - Year: Año de fabricación.
-# - Selling_Price: Precio de venta.
-# - Present_Price: Precio actual.
-# - Driven_Kms: Kilometraje recorrido.
-# - Fuel_type: Tipo de combustible.
-# - Selling_Type: Tipo de vendedor.
-# - Transmission: Tipo de transmisión.
-# - Owner: Número de propietarios.
-#
-# El dataset ya se encuentra dividido en conjuntos de entrenamiento y prueba
-# en la carpeta "files/input/".
-#
-# Los pasos que debe seguir para la construcción de un modelo de
-# pronostico están descritos a continuación.
-#
-#
-# Paso 1.
-# Preprocese los datos.
-# - Cree la columna 'Age' a partir de la columna 'Year'.
-#   Asuma que el año actual es 2021.
-# - Elimine las columnas 'Year' y 'Car_Name'.
-#
-#
-# Paso 2.
-# Divida los datasets en x_train, y_train, x_test, y_test.
-#
-#
-# Paso 3.
-# Cree un pipeline para el modelo de clasificación. Este pipeline debe
-# contener las siguientes capas:
-# - Transforma las variables categoricas usando el método
-#   one-hot-encoding.
-# - Escala las variables numéricas al intervalo [0, 1].
-# - Selecciona las K mejores entradas.
-# - Ajusta un modelo de regresion lineal.
-#
-#
-# Paso 4.
-# Optimice los hiperparametros del pipeline usando validación cruzada.
-# Use 10 splits para la validación cruzada. Use el error medio absoluto
-# para medir el desempeño modelo.
-#
-#
-# Paso 5.
-# Guarde el modelo (comprimido con gzip) como "files/models/model.pkl.gz".
-# Recuerde que es posible guardar el modelo comprimido usanzo la libreria gzip.
-#
-#
-# Paso 6.
-# Calcule las metricas r2, error cuadratico medio, y error absoluto medio
-# para los conjuntos de entrenamiento y prueba. Guardelas en el archivo
-# files/output/metrics.json. Cada fila del archivo es un diccionario con
-# las metricas de un modelo. Este diccionario tiene un campo para indicar
-# si es el conjunto de entrenamiento o prueba. Por ejemplo:
-#
-# {'type': 'metrics', 'dataset': 'train', 'r2': 0.8, 'mse': 0.7, 'mad': 0.9}
-# {'type': 'metrics', 'dataset': 'test', 'r2': 0.7, 'mse': 0.6, 'mad': 0.8}
-#
+import os
+import gzip
+import json
+import pickle
+import zipfile
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import (
+    r2_score,
+    mean_absolute_error,
+    mean_squared_error,
+)
+
+class Settings:
+    """Configuración centralizada de rutas, columnas y parámetros del modelo."""
+
+    BASE_PATH = Path(__file__).resolve().parent.parent
+    INPUT_PATH = BASE_PATH / "files" / "input"
+    MODEL_PATH = BASE_PATH / "files" / "models"
+    OUTPUT_PATH = BASE_PATH / "files" / "output"
+
+    TRAIN_FILE_ZIP = INPUT_PATH / "train_data.csv.zip"
+    TEST_FILE_ZIP = INPUT_PATH / "test_data.csv.zip"
+    TRAIN_FILE = "train_data.csv"
+    TEST_FILE = "test_data.csv"
+
+    CURRENT_YEAR = 2021
+    TARGET = "Present_Price"
+    CATEGORICAL = ["Fuel_Type", "Selling_type", "Transmission"]
+    NUMERIC = ["Driven_kms", "Owner", "Age"]
+    PRICE_FEATURE = ["Selling_Price"]
+
+    GRID_PARAMETERS = {
+        "kbest__k": list(range(4, 12))  # desde 4 hasta 11
+    }
+
+def load_csv_from_zip(zip_path: Path, csv_filename: str) -> pd.DataFrame:
+    """
+    Carga un archivo CSV comprimido dentro de un archivo ZIP.
+
+    Args:
+        zip_path: Ruta al archivo ZIP.
+        csv_filename: Nombre del archivo CSV dentro del ZIP.
+
+    Returns:
+        DataFrame con el contenido del CSV.
+    """
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        with archive.open(csv_filename) as file:
+            df = pd.read_csv(file)
+            if df.columns[0].startswith("Unnamed"):
+                df = df.drop(columns=df.columns[0])
+    return df
+
+
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Realiza el preprocesamiento de los datos:
+    - Calcula la antigüedad ('Age') del vehículo.
+    - Elimina columnas irrelevantes.
+    - Limpia valores nulos.
+    - Aplica transformación logarítmica al precio de venta.
+
+    Args:
+        df: Conjunto de datos original.
+
+    Returns:
+        DataFrame limpio y transformado.
+    """
+    data = df.copy()
+    data["Age"] = Settings.CURRENT_YEAR - data["Year"]
+    data.drop(columns=["Year", "Car_Name"], inplace=True)
+    data.dropna(inplace=True)
+    data["Selling_Price"] = np.log1p(data["Selling_Price"])
+    return data
+
+
+def build_pipeline() -> GridSearchCV:
+    """
+    Construye un pipeline completo de preprocesamiento, selección de variables
+    y ajuste del modelo lineal, con búsqueda de hiperparámetros mediante GridSearchCV.
+
+    Returns:
+        Objeto GridSearchCV configurado.
+    """
+    transformer = ColumnTransformer(
+        transformers=[
+            ("cat", OneHotEncoder(handle_unknown="ignore"), Settings.CATEGORICAL),
+            ("scale", MinMaxScaler(), Settings.NUMERIC),
+            ("price_passthrough", "passthrough", Settings.PRICE_FEATURE),
+        ],
+        remainder="drop",
+    )
+
+    model_pipeline = Pipeline(
+        steps=[
+            ("prep", transformer),
+            ("kbest", SelectKBest(score_func=f_regression)),
+            ("linreg", LinearRegression()),
+        ]
+    )
+
+    search = GridSearchCV(
+        estimator=model_pipeline,
+        param_grid=Settings.GRID_PARAMETERS,
+        cv=10,
+        scoring="neg_mean_absolute_error",
+        refit=True,
+        verbose=1,
+    )
+
+    return search
+
+
+def compute_metrics(name: str, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, Any]:
+    """
+    Calcula las métricas de desempeño del modelo.
+
+    Args:
+        name: Nombre del conjunto de datos ("train" o "test").
+        y_true: Valores reales.
+        y_pred: Predicciones del modelo.
+
+    Returns:
+        Diccionario con métricas R², MSE y MAD.
+    """
+    return {
+        "type": "metrics",
+        "dataset": name,
+        "r2": float(r2_score(y_true, y_pred)),
+        "mse": float(mean_squared_error(y_true, y_pred)),
+        "mad": float(mean_absolute_error(y_true, y_pred)),
+    }
+
+
+def save_model(model: Any, path: Path) -> None:
+    """
+    Guarda el modelo en formato comprimido .pkl.gz.
+
+    Args:
+        model: Modelo a guardar.
+        path: Ruta destino del archivo comprimido.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wb") as file:
+        pickle.dump(model, file)
+
+
+def save_metrics(metrics: List[Dict[str, Any]], path: Path) -> None:
+    """
+    Guarda las métricas del modelo en formato JSONL.
+
+    Args:
+        metrics: Lista de diccionarios con métricas.
+        path: Ruta destino del archivo JSON.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for entry in metrics:
+            f.write(json.dumps(entry) + "\n")
+
+def main():
+    """Función principal: ejecuta todo el flujo del modelo de predicción."""
+
+
+    df_train = preprocess_data(load_csv_from_zip(Settings.TRAIN_FILE_ZIP, Settings.TRAIN_FILE))
+    df_test = preprocess_data(load_csv_from_zip(Settings.TEST_FILE_ZIP, Settings.TEST_FILE))
+
+
+    X_train = df_train.drop(Settings.TARGET, axis=1)
+    y_train = np.log1p(df_train[Settings.TARGET])
+    X_test = df_test.drop(Settings.TARGET, axis=1)
+    y_test = np.log1p(df_test[Settings.TARGET])
+
+    model_search = build_pipeline()
+    model_search.fit(X_train, y_train)
+
+    model_path = Settings.MODEL_PATH / "model.pkl.gz"
+    save_model(model_search, model_path)
+
+    y_train_pred = np.expm1(model_search.predict(X_train))
+    y_test_pred = np.expm1(model_search.predict(X_test))
+    y_train_real = np.expm1(y_train)
+    y_test_real = np.expm1(y_test)
+
+    metrics_train = compute_metrics("train", y_train_real, y_train_pred)
+    metrics_test = compute_metrics("test", y_test_real, y_test_pred)
+
+    metrics_path = Settings.OUTPUT_PATH / "metrics.json"
+    save_metrics([metrics_train, metrics_test], metrics_path)
+
+    print("Entrenamiento completado con éxito. Modelo y métricas guardados.")
+
+if __name__ == "__main__":
+    main()
