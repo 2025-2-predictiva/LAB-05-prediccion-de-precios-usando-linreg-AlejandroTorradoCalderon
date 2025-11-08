@@ -198,7 +198,8 @@ def main():
     metrics_path = Settings.OUTPUT_PATH / "metrics.json"
     save_metrics([metrics_train, metrics_test], metrics_path)
 
-    print("Entrenamiento completado con éxito. Modelo y métricas guardados.")
 
 if __name__ == "__main__":
     main()
+
+#############################################################################
