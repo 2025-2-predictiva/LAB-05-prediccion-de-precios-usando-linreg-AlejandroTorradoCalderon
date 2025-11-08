@@ -44,16 +44,7 @@ class Settings:
     }
 
 def load_csv_from_zip(zip_path: Path, csv_filename: str) -> pd.DataFrame:
-    """
-    Carga un archivo CSV comprimido dentro de un archivo ZIP.
 
-    Args:
-        zip_path: Ruta al archivo ZIP.
-        csv_filename: Nombre del archivo CSV dentro del ZIP.
-
-    Returns:
-        DataFrame con el contenido del CSV.
-    """
     with zipfile.ZipFile(zip_path, "r") as archive:
         with archive.open(csv_filename) as file:
             df = pd.read_csv(file)
@@ -63,19 +54,7 @@ def load_csv_from_zip(zip_path: Path, csv_filename: str) -> pd.DataFrame:
 
 
 def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Realiza el preprocesamiento de los datos:
-    - Calcula la antigüedad ('Age') del vehículo.
-    - Elimina columnas irrelevantes.
-    - Limpia valores nulos.
-    - Aplica transformación logarítmica al precio de venta.
 
-    Args:
-        df: Conjunto de datos original.
-
-    Returns:
-        DataFrame limpio y transformado.
-    """
     data = df.copy()
     data["Age"] = Settings.CURRENT_YEAR - data["Year"]
     data.drop(columns=["Year", "Car_Name"], inplace=True)
@@ -85,13 +64,7 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_pipeline() -> GridSearchCV:
-    """
-    Construye un pipeline completo de preprocesamiento, selección de variables
-    y ajuste del modelo lineal, con búsqueda de hiperparámetros mediante GridSearchCV.
 
-    Returns:
-        Objeto GridSearchCV configurado.
-    """
     transformer = ColumnTransformer(
         transformers=[
             ("cat", OneHotEncoder(handle_unknown="ignore"), Settings.CATEGORICAL),
@@ -122,17 +95,7 @@ def build_pipeline() -> GridSearchCV:
 
 
 def compute_metrics(name: str, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, Any]:
-    """
-    Calcula las métricas de desempeño del modelo.
 
-    Args:
-        name: Nombre del conjunto de datos ("train" o "test").
-        y_true: Valores reales.
-        y_pred: Predicciones del modelo.
-
-    Returns:
-        Diccionario con métricas R², MSE y MAD.
-    """
     return {
         "type": "metrics",
         "dataset": name,
@@ -143,33 +106,20 @@ def compute_metrics(name: str, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[s
 
 
 def save_model(model: Any, path: Path) -> None:
-    """
-    Guarda el modelo en formato comprimido .pkl.gz.
 
-    Args:
-        model: Modelo a guardar.
-        path: Ruta destino del archivo comprimido.
-    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wb") as file:
         pickle.dump(model, file)
 
 
 def save_metrics(metrics: List[Dict[str, Any]], path: Path) -> None:
-    """
-    Guarda las métricas del modelo en formato JSONL.
 
-    Args:
-        metrics: Lista de diccionarios con métricas.
-        path: Ruta destino del archivo JSON.
-    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for entry in metrics:
             f.write(json.dumps(entry) + "\n")
 
 def main():
-    """Función principal: ejecuta todo el flujo del modelo de predicción."""
 
 
     df_train = preprocess_data(load_csv_from_zip(Settings.TRAIN_FILE_ZIP, Settings.TRAIN_FILE))
